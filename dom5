@@ -1,0 +1,129 @@
+public class TaskItem
+{
+    public int Id { get; set; } // Идентификатор
+    public string Title { get; set; } // Название задачи
+    public string Description { get; set; } // Описание
+    public bool IsCompleted { get; set; } // Признак выполнения
+}
+var builder = WebApplication.CreateBuilder(args);
+
+// Регистрация именованного HttpClient с базовым адресом Web API
+builder.Services.AddHttpClient("TaskApi", client =>
+{
+    client.BaseAddress = new Uri("https://localhost:5001/"); // Укажите реальный адрес вашего Web API
+});
+
+builder.Services.AddControllersWithViews();
+
+var app = builder.Build();
+// Дальнейшая конфигурация middleware...
+using System.Text;
+using System.Text.Json;
+
+public class TaskApiClient
+{
+    private readonly HttpClient _client;
+
+    public TaskApiClient(IHttpClientFactory httpClientFactory)
+    {
+        _client = httpClientFactory.CreateClient("TaskApi");
+    }
+
+    // Получение списка задач (GET /api/tasks)
+    public async Task<IEnumerable<TaskItem>> GetAllTasksAsync()
+    {
+        var response = await _client.GetAsync("api/tasks");
+        
+        if (response.IsSuccessStatusCode) // 200 OK
+        {
+            var content = await response.Content.ReadAsStringAsync();
+            return JsonSerializer.Deserialize<IEnumerable<TaskItem>>(content, new JsonSerializerOptions { PropertyNameCaseInsensitive = true }) ?? new List<TaskItem>();
+        }
+        
+        if ((int)response.StatusCode == 500)
+        {
+            throw new Exception("Внутренняя ошибка сервера (500). Попробуйте позже.");
+        }
+
+        return new List<TaskItem>();
+    }
+
+    // Получение одной задачи по Id (GET /api/tasks/{id})
+    public async Task<TaskItem?> GetTaskByIdAsync(int id)
+    {
+        var response = await _client.GetAsync($"api/tasks/{id}");
+
+        if (response.StatusCode == System.Net.HttpStatusCode.NotFound) // 404 Not Found
+        {
+            return null;
+        }
+
+        if (response.IsSuccessStatusCode) // 200 OK
+        {
+            var content = await response.Content.ReadAsStringAsync();
+            return JsonSerializer.Deserialize<TaskItem>(content, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+        }
+
+        throw new Exception($"Ошибка при получении задачи. Код: {response.StatusCode}");
+    }
+
+    // Добавление задачи (POST /api/tasks)
+    public async Task<bool> CreateTaskAsync(TaskItem taskItem)
+    {
+        var json = JsonSerializer.Serialize(taskItem);
+        var data = new StringContent(json, Encoding.UTF8, "application/json");
+
+        var response = await _client.PostAsync("api/tasks", data);
+
+        if (response.StatusCode == System.Net.HttpStatusCode.Created || response.IsSuccessStatusCode) // 201 Created / 200 OK[cite: 4]
+        {
+            return true;
+        }
+
+        if (response.StatusCode == System.Net.HttpStatusCode.BadRequest) // 400 Bad Request[cite: 4]
+        {
+            throw new Exception("Неверные данные при создании задачи (400 Bad Request).");
+        }
+
+        return false;
+    }
+
+    // Изменение задачи (PUT /api/tasks/{id})[cite: 4]
+    public async Task<bool> UpdateTaskAsync(int id, TaskItem taskItem)
+    {
+        var json = JsonSerializer.Serialize(taskItem);
+        var data = new StringContent(json, Encoding.UTF8, "application/json");
+
+        var response = await _client.PutAsync($"api/tasks/{id}", data);
+
+        if (response.IsSuccessStatusCode) // 200 OK[cite: 4]
+        {
+            return true;
+        }
+
+        if (response.StatusCode == System.Net.HttpStatusCode.NotFound) // 404[cite: 4]
+        {
+            throw new Exception("Задача для обновления не найдена (404).");
+        }
+
+        return false;
+    }
+
+    // Удаление задачи (DELETE /api/tasks/{id})[cite: 4]
+    public async Task<bool> DeleteTaskAsync(int id)
+    {
+        var response = await _client.DeleteAsync($"api/tasks/{id}");
+
+        if (response.IsSuccessStatusCode) // 200 OK[cite: 4]
+        {
+            return true;
+        }
+
+        if (response.StatusCode == System.Net.HttpStatusCode.NotFound) // 404[cite: 4]
+        {
+            throw new Exception("Удаляемая задача не найдена.");
+        }
+
+        return false;
+    }
+}
