@@ -1,0 +1,249 @@
+public class Product
+{
+    public int Id { get; set; }
+    public string Name { get; set; }
+    public string Description { get; set; }
+    public decimal Price { get; set; }
+    public int Quantity { get; set; }
+}
+var builder = WebApplication.CreateBuilder(args);
+
+// Регистрация именованного HttpClient
+builder.Services.AddHttpClient("ProductApi", client =>
+{
+    client.BaseAddress = new Uri("https://localhost:5001/"); // Укажите актуальный адрес вашего Web API
+});
+
+// Регистрация сервиса
+builder.Services.AddScoped<IProductApiService, ProductApiService>();
+
+builder.Services.AddControllersWithViews();
+
+var app = builder.Build();
+// Настройка конвейера запросов (Middleware)...
+public interface IProductApiService
+{
+    Task<IEnumerable<Product>> GetAllAsync();
+    Task<Product?> GetByIdAsync(int id);
+    Task<bool> CreateAsync(Product product);
+    Task<bool> UpdateAsync(int id, Product product);
+    Task<bool> DeleteAsync(int id);
+}
+using System.Text;
+using System.Text.Json;
+
+public class ProductApiService : IProductApiService
+{
+    private readonly HttpClient _client;
+
+    public ProductApiService(IHttpClientFactory httpClientFactory)
+    {
+        _client = httpClientFactory.CreateClient("ProductApi");
+    }
+
+    // Часть 4: Получение списка товаров — GET /api/products
+    public async Task<IEnumerable<Product>> GetAllAsync()
+    {
+        var response = await _client.GetAsync("api/products");
+        if (response.IsSuccessStatusCode) // 200 OK[cite: 5]
+        {
+            var content = await response.Content.ReadAsStringAsync();
+            return JsonSerializer.Deserialize<IEnumerable<Product>>(content, new JsonSerializerOptions { PropertyNameCaseInsensitive = true }) ?? new List<Product>();
+        }
+        return new List<Product>();
+    }
+
+    // Часть 5: Получение товара по ID — GET /api/products/{id}[cite: 5]
+    public async Task<Product?> GetByIdAsync(int id)
+    {
+        var response = await _client.GetAsync($"api/products/{id}");
+        
+        if (response.StatusCode == System.Net.HttpStatusCode.NotFound) // 404 Not Found[cite: 5]
+        {
+            return null;
+        }
+
+        if (response.IsSuccessStatusCode) // 200 OK[cite: 5]
+        {
+            var content = await response.Content.ReadAsStringAsync();
+            return JsonSerializer.Deserialize<Product>(content, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+        }
+
+        throw new Exception($"Ошибка при получении товара. Код: {response.StatusCode}");
+    }
+
+    // Часть 6: Добавление товара — POST /api/products[cite: 5]
+    public async Task<bool> CreateAsync(Product product)
+    {
+        var json = JsonSerializer.Serialize(product);
+        var data = new StringContent(json, Encoding.UTF8, "application/json");
+
+        var response = await _client.PostAsync("api/products", data);
+
+        if (response.IsSuccessStatusCode || response.StatusCode == System.Net.HttpStatusCode.Created) // 201 Created / 200 OK[cite: 5]
+        {
+            return true;
+        }
+
+        if (response.StatusCode == System.Net.HttpStatusCode.BadRequest) // 400 Bad Request[cite: 5]
+        {
+            throw new Exception("Неверные данные (400 Bad Request).");
+        }
+
+        return false;
+    }
+
+    // Часть 7: Изменение товара — PUT /api/products/{id}[cite: 5]
+    public async Task<bool> UpdateAsync(int id, Product product)
+    {
+        var json = JsonSerializer.Serialize(product);
+        var data = new StringContent(json, Encoding.UTF8, "application/json");
+
+        var response = await _client.PutAsync($"api/products/{id}", data);
+
+        if (response.IsSuccessStatusCode) // 200 OK[cite: 5]
+        {
+            return true;
+        }
+
+        if (response.StatusCode == System.Net.HttpStatusCode.NotFound) // 404 Not Found[cite: 5]
+        {
+            throw new Exception("Товар для изменения не найден (404).");
+        }
+
+        return false;
+    }
+
+    // Часть 8: Удаление товара — DELETE /api/products/{id}[cite: 5]
+    public async Task<bool> DeleteAsync(int id)
+    {
+        var response = await _client.DeleteAsync($"api/products/{id}");
+
+        if (response.IsSuccessStatusCode) // 200 OK[cite: 5]
+        {
+            return true;
+        }
+
+        if (response.StatusCode == System.Net.HttpStatusCode.NotFound) // 404 Not Found[cite: 5]
+        {
+            throw new Exception("Удаляемый товар не найден.");
+        }
+
+        return false;
+    }
+}
+public class ProductController : Controller
+{
+    private readonly IProductApiService _apiService;
+
+    public ProductController(IProductApiService apiService)
+    {
+        _apiService = apiService;
+    }
+
+    // GET: /Product
+    public async Task<IActionResult> Index()
+    {
+        try
+        {
+            var products = await _apiService.GetAllAsync();
+            return View(products);
+        }
+        catch (Exception ex)
+        {
+            ModelState.AddModelError("", $"Ошибка при загрузке данных: {ex.Message}");
+            return View(new List<Product>());
+        }
+    }
+
+    // GET: /Product/Details/{id}
+    public async Task<IActionResult> Details(int id)
+    {
+        try
+        {
+            var product = await _apiService.GetByIdAsync(id);
+            if (product == null)
+            {
+                ViewBag.ErrorMessage = "Товар не найден."; // Обработка 404[cite: 5]
+                return View("NotFound");
+            }
+            return View(product);
+        }
+        catch (Exception ex)
+        {
+            ViewBag.ErrorMessage = ex.Message;
+            return View("Error");
+        }
+    }
+
+    // GET: /Product/Create
+    public IActionResult Create() => View();
+
+    // POST: /Product/Create
+    [HttpPost]
+    public async Task<IActionResult> Create(Product product)
+    {
+        if (ModelState.IsValid)
+        {
+            try
+            {
+                var success = await _apiService.CreateAsync(product);
+                if (success)
+                {
+                    return RedirectToAction(nameof(Index)); // Возврат к списку после успеха[cite: 5]
+                }
+            }
+            catch (Exception ex)
+            {
+                ModelState.AddModelError("", ex.Message);
+            }
+        }
+        return View(product);
+    }
+
+    // GET: /Product/Edit/{id}
+    public async Task<IActionResult> Edit(int id)
+    {
+        var product = await _apiService.GetByIdAsync(id);
+        if (product == null)
+        {
+            ViewBag.ErrorMessage = "Товар не найден.";
+            return View("NotFound");
+        }
+        return View(product);
+    }
+
+    // POST: /Product/Edit/{id}
+    [HttpPost]
+    public async Task<IActionResult> Edit(int id, Product product)
+    {
+        try
+        {
+            var success = await _apiService.UpdateAsync(id, product);
+            if (success)
+            {
+                return RedirectToAction(nameof(Index)); // Возврат к списку после обновления[cite: 5]
+            }
+        }
+        catch (Exception ex)
+        {
+            ModelState.AddModelError("", ex.Message);
+        }
+        return View(product);
+    }
+
+    // POST: /Product/Delete/{id}
+    [HttpPost]
+    public async Task<IActionResult> Delete(int id)
+    {
+        try
+        {
+            await _apiService.DeleteAsync(id);
+        }
+        catch (Exception)
+        {
+            // Обработка ошибок при удалении
+        }
+        return RedirectToAction(nameof(Index)); // Обновление списка после удаления[cite: 5]
+    }
+}
