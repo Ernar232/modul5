@@ -1,0 +1,242 @@
+public class Student
+{
+    public int Id { get; set; }
+    public string FullName { get; set; }
+    public string Group { get; set; }
+    public int Course { get; set; }
+    public string Email { get; set; }
+}
+var builder = WebApplication.CreateBuilder(args);
+
+// Регистрация именованного HttpClient
+builder.Services.AddHttpClient("StudentApi", client =>
+{
+    client.BaseAddress = new Uri("https://localhost:5001/"); // Укажите актуальный адрес вашего Web API
+});
+
+// Регистрация сервиса
+builder.Services.AddScoped<IStudentApiService, StudentApiService>();
+
+builder.Services.AddControllersWithViews();
+
+var app = builder.Build();
+// Настройка конвейера запросов...
+public interface IStudentApiService
+{
+    Task<IEnumerable<Student>> GetAllAsync();
+    Task<Student?> GetByIdAsync(int id);
+    Task<bool> CreateAsync(Student student);
+    Task<bool> UpdateAsync(int id, Student student);
+    Task<bool> DeleteAsync(int id);
+}
+using System.Text;
+using System.Text.Json;
+
+public class StudentApiService : IStudentApiService
+{
+    private readonly HttpClient _client;
+
+    public StudentApiService(IHttpClientFactory httpClientFactory)
+    {
+        // Создание настроенного клиента по имени
+        _client = httpClientFactory.CreateClient("StudentApi");
+    }
+
+    // Часть 4: Получение списка студентов (GET /api/students)
+    public async Task<IEnumerable<Student>> GetAllAsync()
+    {
+        var response = await _client.GetAsync("api/students");
+        if (response.IsSuccessStatusCode) // 200 OK[cite: 6]
+        {
+            var content = await response.Content.ReadAsStringAsync();
+            return JsonSerializer.Deserialize<IEnumerable<Student>>(content, new JsonSerializerOptions { PropertyNameCaseInsensitive = true }) ?? new List<Student>();
+        }
+        return new List<Student>();
+    }
+
+    // Часть 5: Получение студента по ID (GET /api/students/{id})[cite: 6]
+    public async Task<Student?> GetByIdAsync(int id)
+    {
+        var response = await _client.GetAsync($"api/students/{id}");
+
+        if (response.StatusCode == System.Net.HttpStatusCode.NotFound) // 404 Not Found[cite: 6]
+        {
+            return null;
+        }
+
+        if (response.IsSuccessStatusCode) // 200 OK[cite: 6]
+        {
+            var content = await response.Content.ReadAsStringAsync();
+            return JsonSerializer.Deserialize<Student>(content, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+        }
+
+        throw new Exception($"Ошибка при получении студента. Код: {response.StatusCode}");
+    }
+
+    // Часть 6: Добавление студента (POST /api/students)[cite: 6]
+    public async Task<bool> CreateAsync(Student student)
+    {
+        var json = JsonSerializer.Serialize(student);
+        var data = new StringContent(json, Encoding.UTF8, "application/json");
+
+        var response = await _client.PostAsync("api/students", data);
+
+        if (response.IsSuccessStatusCode || response.StatusCode == System.Net.HttpStatusCode.Created) // 200 OK / 201 Created[cite: 6]
+        {
+            return true;
+        }
+
+        if (response.StatusCode == System.Net.HttpStatusCode.BadRequest) // 400 Bad Request[cite: 6]
+        {
+            throw new Exception("Неверные данные при создании студента (400 Bad Request).");
+        }
+
+        return false;
+    }
+
+    // Часть 9 (Самостоятельная часть): Изменение студента (PUT /api/students/{id})[cite: 6]
+    public async Task<bool> UpdateAsync(int id, Student student)
+    {
+        var json = JsonSerializer.Serialize(student);
+        var data = new StringContent(json, Encoding.UTF8, "application/json");
+
+        var response = await _client.PutAsync($"api/students/{id}", data);
+
+        if (response.IsSuccessStatusCode) // 200 OK[cite: 6]
+        {
+            return true;
+        }
+
+        if (response.StatusCode == System.Net.HttpStatusCode.NotFound) // 404 Not Found[cite: 6]
+        {
+            throw new Exception("Студент для изменения не найден (404).");
+        }
+
+        return false;
+    }
+
+    // Часть 7: Удаление студента (DELETE /api/students/{id})[cite: 6]
+    public async Task<bool> DeleteAsync(int id)
+    {
+        var response = await _client.DeleteAsync($"api/students/{id}");
+
+        if (response.IsSuccessStatusCode) // 200 OK[cite: 6]
+        {
+            return true;
+        }
+
+        if (response.StatusCode == System.Net.HttpStatusCode.NotFound) // 404 Not Found[cite: 6]
+        {
+            throw new Exception("Удаляемый студент не найден.");
+        }
+
+        return false;
+    }
+}
+public class StudentController : Controller
+{
+    private readonly IStudentApiService _apiService;
+
+    public StudentController(IStudentApiService apiService)
+    {
+        _apiService = apiService;
+    }
+
+    // GET: /Student
+    public async Task<IActionResult> Index()
+    {
+        try
+        {
+            var students = await _apiService.GetAllAsync();
+            return View(students); // Отображение списка студентов[cite: 6]
+        }
+        catch (Exception ex)
+        {
+            ModelState.AddModelError("", $"Ошибка сервера (500): {ex.Message}");
+            return View(new List<Student>());
+        }
+    }
+
+    // GET: /Student/Details/{id}
+    public async Task<IActionResult> Details(int id)
+    {
+        var student = await _apiService.GetByIdAsync(id);
+        if (student == null)
+        {
+            ViewBag.ErrorMessage = "Студент с указанным ID не найден."; // Обработка 404[cite: 6]
+            return View("NotFound");
+        }
+        return View(student);
+    }
+
+    // GET: /Student/Create
+    public IActionResult Create() => View();
+
+    // POST: /Student/Create
+    [HttpPost]
+    public async Task<IActionResult> Create(Student student)
+    {
+        if (ModelState.IsValid)
+        {
+            try
+            {
+                var success = await _apiService.CreateAsync(student);
+                if (success)
+                {
+                    return RedirectToAction(nameof(Index)); // Возврат к списку после успешного добавления[cite: 6]
+                }
+            }
+            catch (Exception ex)
+            {
+                ModelState.AddModelError("", ex.Message);
+            }
+        }
+        return View(student);
+    }
+
+    // GET: /Student/Edit/{id} (Самостоятельная часть)[cite: 6]
+    public async Task<IActionResult> Edit(int id)
+    {
+        var student = await _apiService.GetByIdAsync(id); // Получение данных выбранного студента через GET[cite: 6]
+        if (student == null)
+        {
+            ViewBag.ErrorMessage = "Студент не найден.";
+            return View("NotFound");
+        }
+        return View(student); // Отображение формы с текущими данными[cite: 6]
+    }
+
+    // POST: /Student/Edit/{id} (Самостоятельная часть)[cite: 6]
+    [HttpPost]
+    public async Task<IActionResult> Edit(int id, Student student)
+    {
+        try
+        {
+            var success = await _apiService.UpdateAsync(id, student); // Отправка измененных данных через PUT[cite: 6]
+            if (success)
+            {
+                return RedirectToAction(nameof(Index)); // Возврат к общему списку[cite: 6]
+            }
+        }
+        catch (Exception ex)
+        {
+            ModelState.AddModelError("", ex.Message);
+        }
+        return View(student);
+    }
+
+    // POST: /Student/Delete/{id}
+    [HttpPost]
+    public async Task<IActionResult> Delete(int id)
+    {
+        try
+        {
+            await _apiService.DeleteAsync(id); // Выполнение DELETE /api/students/{id}[cite: 6]
+        }
+        catch (Exception)
+        {
+            // Обработка исключений удаления
+        }
+        return RedirectToAction(nameof(Index)); // Повторный запрос списка и обновление интерфейса[cite: 6]
+    }
+}
